@@ -10,15 +10,22 @@
 
   outputs = { self, nixpkgs, logos-nix, nix-bundle-lgx, logos-package-manager }:
     let
-      systems = [ "aarch64-darwin" "x86_64-darwin" "aarch64-linux" "x86_64-linux" ];
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f {
-        inherit system;
-        pkgs = nixpkgs.legacyPackages.${system};
-        bundleLgxDev = nix-bundle-lgx.bundlers.${system}.default;
-        bundleLgxPortable = nix-bundle-lgx.bundlers.${system}.portable;
-        lgpmCli = logos-package-manager.packages.${system}.cli;
-        lgpmCliPortable = logos-package-manager.packages.${system}.cli-portable;
-      });
+      # lgpm RUNS during the build to install the .lgx, so on a cross target it
+      # comes from the build system. The .lgx bundler is keyed by the TARGET on
+      # purpose: it decides the variant name and the library extension from its
+      # own pkgs, so keying it by the build system would label a Windows package
+      # "linux-amd64" and look for a .so payload that is actually a .dll.
+      buildSystemFor = target:
+        if target == "x86_64-windows" then "x86_64-linux" else target;
+
+      forAllSystems = f: logos-nix.lib.forAllTargets ({ system, pkgs }:
+        let buildSystem = buildSystemFor system; in f {
+          inherit system pkgs;
+          bundleLgxDev = nix-bundle-lgx.bundlers.${system}.default;
+          bundleLgxPortable = nix-bundle-lgx.bundlers.${system}.portable;
+          lgpmCli = logos-package-manager.packages.${buildSystem}.cli;
+          lgpmCliPortable = logos-package-manager.packages.${buildSystem}.cli-portable;
+        });
     in
     {
       bundlers = forAllSystems ({ pkgs, bundleLgxDev, bundleLgxPortable, lgpmCli, lgpmCliPortable, ... }:
@@ -29,7 +36,7 @@
             let
               lgxPkg = bundleLgx drv;
               name = drv.pname or drv.name or "module";
-            in pkgs.runCommand "${name}-install" {
+            in pkgs.pkgsBuildBuild.runCommand "${name}-install" {
               nativeBuildInputs = [ lgpm ];
             } ''
               mkdir -p $out/modules $out/plugins
