@@ -36,6 +36,29 @@
             let
               lgxPkg = bundleLgx drv;
               name = drv.pname or drv.name or "module";
+              # Cross only: lgpm runs on the builder, so on a cross target it
+              # must be told which platform it is laying out. Left EMPTY when
+              # target == build, so the fail-closed check still protects normal
+              # builds -- it is what stops a Windows package being installed as
+              # a Linux one, and it should never be bypassed by default.
+              # Nix doubles are <arch>-<os>; lgpm variants are <os>-<arch> and
+              # do not always use the same arch spelling, so translate rather
+              # than pass the system through. Unknown targets throw: a wrong
+              # variant name would be rejected far from here, and silently
+              # guessing is exactly what the fail-closed check exists to stop.
+              lgpmVariantFor = nixSystem: {
+                "x86_64-windows" = "windows-x86_64";
+                "aarch64-windows" = "windows-arm64";
+                "x86_64-linux" = "linux-x86_64";
+                "aarch64-linux" = "linux-arm64";
+                "x86_64-darwin" = "darwin-x86_64";
+                "aarch64-darwin" = "darwin-arm64";
+              }.${nixSystem} or (throw
+                "nix-bundle-logos-module-install: no lgpm variant name known for ${nixSystem}");
+
+              platformFlag = pkgs.lib.optionalString
+                (pkgs.stdenv.hostPlatform.system != pkgs.stdenv.buildPlatform.system)
+                "--platform ${lgpmVariantFor pkgs.stdenv.hostPlatform.system}";
             in pkgs.pkgsBuildBuild.runCommand "${name}-install" {
               nativeBuildInputs = [ lgpm ];
             } ''
@@ -43,7 +66,7 @@
 
               for lgxFile in ${lgxPkg}/*.lgx; do
                 echo "Installing $(basename "$lgxFile") via lgpm..."
-                lgpm --modules-dir "$out/modules" --ui-plugins-dir "$out/plugins" install --file "$lgxFile"
+                lgpm ${platformFlag} --modules-dir "$out/modules" --ui-plugins-dir "$out/plugins" install --file "$lgxFile"
               done
             '';
         in {
